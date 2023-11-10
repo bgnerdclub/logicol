@@ -1,0 +1,6 @@
+[package]
+name = "logicol"
+version = "0.1.0"
+
+[dependencies]
+raylib = { path = "raylib", features = [""] }

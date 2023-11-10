@@ -1,0 +1,9 @@
+[package]
+name = "glfw"
+version = "0.0.1"
+authors = []
+
+[dependencies]
+
+[defines.linux]
+_GLFW_X11 = ""

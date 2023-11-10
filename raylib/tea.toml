@@ -1,0 +1,10 @@
+[package]
+name = "raylib"
+version = "0.0.1"
+authors = []
+
+[dependencies]
+glfw = { path = "glfw" }
+
+[defines]
+PLATFORM_DESKTOP = ""
