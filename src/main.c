@@ -437,6 +437,56 @@ void drawActive(Circuit* circuit) {
   destroyString(&editing);
 }
 
+void updateInputs(Project* project, Circuit* active) {
+  usize numInputs = 0;
+  String input = fromCString("INPUT");
+  for (usize i = 0; i < active->numComponents; i++) {
+    String name = fromCString(active->components[i].name);
+    if (stringEqual(&name, &input)) {
+      numInputs++;
+    }
+    destroyString(&name);
+  }
+  destroyString(&input);
+
+  for (usize i = 0; i < project->numCircuits; i++) {
+    for (usize j = 0; j < project->circuits[i].numComponents; j++) {
+      String name = fromCString(project->circuits[i].components[j].name);
+      if (stringEqual(&name, &active->name)) {
+        project->circuits[i].components[j].numInputs = numInputs;
+        project->circuits[i].components[j].inputs = realloc(project->circuits[i].components[j].inputs, sizeof(Input) * numInputs);
+        memset(&project->circuits[i].components[j].inputs[numInputs - 1], 0, sizeof(Input));
+      }
+      destroyString(&name);
+    }
+  }
+}
+
+void updateOutputs(Project* project, Circuit* active) {
+  usize numOutputs = 0;
+  String output = fromCString("OUTPUT");
+  for (usize i = 0; i < active->numComponents; i++) {
+    String name = fromCString(active->components[i].name);
+    if (stringEqual(&name, &output)) {
+      numOutputs++;
+    }
+    destroyString(&name);
+  }
+  destroyString(&output);
+
+  for (usize i = 0; i < project->numCircuits; i++) {
+    for (usize j = 0; j < project->circuits[i].numComponents; j++) {
+      String name = fromCString(project->circuits[i].components[j].name);
+      if (stringEqual(&name, &active->name)) {
+        project->circuits[i].components[j].numOutputs = numOutputs;
+        project->circuits[i].components[j].outputs = realloc(project->circuits[i].components[j].outputs, sizeof(bool) * numOutputs);
+        project->circuits[i].components[j].outputs[numOutputs - 1] = false;
+      }
+      destroyString(&name);
+    }
+  }
+}
+
 int logicol_main() {
 	InitWindow(640, 480, "Logicol");
 	SetTargetFPS(60);
@@ -482,10 +532,12 @@ int logicol_main() {
 
 			if (!inputting && IsKeyPressed(KEY_I)) {
 				addComponent(circuit, "INPUT", 0, 1);
+        updateInputs(&project, circuit);
 			}
 
 			if (!inputting && IsKeyPressed(KEY_U)) {
 				addComponent(circuit, "OUTPUT", 1, 0);
+        updateOutputs(&project, circuit);
 			}
 
       if (inputting && IsKeyPressed(KEY_ENTER)) {
