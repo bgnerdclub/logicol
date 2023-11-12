@@ -161,6 +161,12 @@ void addConnection(Circuit* circuit, ComponentRef from, ComponentRef to, usize f
 	Component* t = getComponent(circuit, to);	
 	Component* f = getComponent(circuit, from);
 
+  if (t->inputs[toIndex].component == from && t->inputs[toIndex].outputIndex == fromIndex) { // Delete connection
+    t->inputs[toIndex].component = 0;
+	  t->inputs[toIndex].outputIndex = 0;
+    return;
+  }
+
 	t->inputs[toIndex].component = from;
 	t->inputs[toIndex].outputIndex = fromIndex;
 }
@@ -518,6 +524,10 @@ int logicol_main() {
           buffer.data = realloc(buffer.data, sizeof(char) * buffer.length);
           buffer.data[buffer.length - 1] = character;
         }
+        DrawRectangleV((Vector2){ 0, GetScreenHeight() - 64 }, (Vector2){ GetScreenWidth(), GetScreenHeight() }, PURPLE);
+        char* b = toCString(&buffer);
+        DrawTextEx(GetFontDefault(), b, (Vector2){ 16, GetScreenHeight() - 56 }, FONT_SIZE, FONT_SPACING, BACKGROUND);
+        free(b);
       }
 
       if (!inputting && IsKeyPressed(KEY_C)) {
