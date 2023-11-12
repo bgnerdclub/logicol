@@ -17,6 +17,62 @@ typedef float    f32;
 typedef double   f64;
 typedef size_t   usize;
 
+typedef struct {
+  usize length;
+  char* data;
+} String;
+
+String createString() {
+  String string;
+  string.length = 0;
+  string.data = NULL;
+  return string;
+}
+
+void destroyString(String* string) {
+  free(string->data);
+}
+
+String fromCString(const char* data) {
+  String string;
+  string.length = strlen(data);
+  string.data = malloc(sizeof(char) * string.length);
+  memcpy(string.data, data, sizeof(char) * string.length);
+  return string;
+}
+
+void appendString(String* base, String* extra) {
+  usize old = base->length;
+  base->length += extra->length;
+  base->data = realloc(base->data, sizeof(char) * base->length);
+  memcpy(&base->data[old], extra->data, sizeof(char) * extra->length);
+}
+
+bool stringEqual(String* a, String* b) {
+  if (a->length != b->length) return false;
+
+  for (usize i = 0; i < a->length; i++) {
+    if (a->data[i] != b->data[i]) return false;
+  }
+
+  return true;
+}
+
+char* toCString(String* string) {
+  char* buffer = malloc(sizeof(char) * (string->length + 1));
+  memset(buffer, 0, sizeof(char) * (string->length + 1));
+  memcpy(buffer, string->data, sizeof(char) * string->length);
+  return buffer;
+}
+
+String cloneString(String* base) {
+  String string;
+  string.length = base->length;
+  string.data = malloc(sizeof(char) * base->length);
+  memcpy(string.data, base->data, sizeof(char) * base->length);
+  return string;
+}
+
 #define PURPLE (Color){ 126, 34, 206, 255 }
 #define BACKGROUND (Color){ 15, 23, 42, 255 }
 
@@ -25,6 +81,7 @@ static f32 FONT_SPACING = 8.0;
 
 typedef struct Component Component;
 typedef usize ComponentRef;
+typedef usize CircuitRef;
 
 typedef struct {
 	usize outputIndex;
@@ -33,7 +90,7 @@ typedef struct {
 
 typedef struct Component {
 	Vector2 pos;
-	usize id;
+	ComponentRef id;
 	const char* name;
 	usize numInputs;
 	Input* inputs;
@@ -43,15 +100,37 @@ typedef struct Component {
 } Component;
 
 typedef struct {
+  CircuitRef id;
 	usize numComponents;
 	Component* components;
-	usize lastID;
+  String name;
 } Circuit;
 
-Circuit createCircuit() {
-	Circuit circuit;
-	memset(&circuit, 0, sizeof circuit);
-	return circuit;
+typedef struct {
+  usize numCircuits;
+  Circuit* circuits;
+} Project;
+
+Project createProject() {
+  Project project;
+  project.numCircuits = 0;
+  project.circuits = NULL;
+  return project;
+}
+
+CircuitRef addCircuit(Project* project, String name) {
+  project->numCircuits++;
+  project->circuits = realloc(project->circuits, project->numCircuits * sizeof *project->circuits);
+	Circuit* circuit = &project->circuits[project->numCircuits - 1];
+  circuit->id = project->numCircuits;
+  circuit->numComponents = 0;
+  circuit->components = NULL;
+  circuit->name = name;
+	return circuit->id;
+}
+
+Circuit* getCircuit(Project* project, CircuitRef ref) {
+  return &project->circuits[ref - 1];
 }
 
 Component* getComponent(Circuit* circuit, ComponentRef ref) {
@@ -60,8 +139,8 @@ Component* getComponent(Circuit* circuit, ComponentRef ref) {
 
 ComponentRef addComponent(Circuit* circuit, const char* name, usize numInputs, usize numOutputs) {
 	Component component;
-	component.pos = (Vector2){ 0, 0 };
-	component.id = ++circuit->lastID;
+	component.pos = (Vector2){ 100, 100 };
+	component.id = circuit->numComponents + 1;
 	printf("%zu\n", component.id);
 	component.name = name;
 	component.numInputs = numInputs;
@@ -128,6 +207,13 @@ void drawComponent(Circuit* circuit, Component* component) {
 			color = RED;
 		}
 	}
+  if (strcmp(component->name, "OUTPUT") == 0) {
+    if (component->inputs[0].component != 0 && getComponent(circuit, component->inputs[0].component)->outputs[component->inputs[0].outputIndex]) {
+			color = GREEN;
+		} else {
+			color = RED;
+		}
+  }
 
 	DrawRectangleLinesEx(rect, 6.0, color);
 	DrawTextEx(GetFontDefault(), idStr, (Vector2){ x + ((rect.width - idSize.x) / 2), y + 8 }, FONT_SIZE, FONT_SPACING, color);
@@ -145,7 +231,9 @@ void drawComponent(Circuit* circuit, Component* component) {
 			Vector2 owo = (Vector2){ 
 				connected->pos.x + connectedSize.x + 32, 
 				connected->pos.y + connectedSize.y * (f32)(component->inputs[i].outputIndex + 1.0)/(f32)(connected->numOutputs + 1) };
-			DrawLineBezier(end, owo, 6.0, PURPLE);
+      Color connectionColor = RED;
+      if (connected->outputs[component->inputs[i].outputIndex]) { connectionColor = GREEN; }
+			DrawLineBezier(end, owo, 6.0, connectionColor);
 		}
 
 	}
@@ -171,7 +259,7 @@ void moveComponent(Circuit* circuit) {
 
 	Vector2 mousePos = GetMousePosition();
 
-	if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+	if (!IsKeyDown(KEY_LEFT_CONTROL) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
 		for (usize i = 0; i < circuit->numComponents; i++) {
 			if (distanceBetween(mousePos, circuit->components[i].pos) < 25.0) {
 				moving = circuit->components[i].id;
@@ -274,60 +362,178 @@ void simulate(Circuit* circuit) {
 
 	for (usize i = 0; i < circuit->numComponents; i++) {
 		if (strcmp(circuit->components[i].name, "OUTPUT") == 0) {
-			printf("%d", simulateComponent(
+	    simulateComponent(
 				circuit, 
 				&circuit->components[i].inputs[0]
-			));
+			);
 		}
 	}
+}
 
-	printf("\n");
+void moveCamera(Camera2D* camera) {
+  if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE)) {
+    camera->target.x -= GetMouseDelta().x / camera->zoom;
+    camera->target.y -= GetMouseDelta().y / camera->zoom;
+  }
+
+  float oldWidth = (float)GetScreenWidth() / camera->zoom;
+  float oldHeight = (float)GetScreenHeight() / camera->zoom;
+
+  camera->zoom *= powf(1.1, GetMouseWheelMove());
+
+  float newWidth = (float)GetScreenWidth() / camera->zoom;
+  float newHeight = (float)GetScreenHeight() / camera->zoom;
+
+  camera->target.x += (oldWidth - newWidth) / 2;
+  camera->target.y += (oldHeight - newHeight) / 2;
+}
+
+CircuitRef getActive(Project* project, Circuit* active) {
+  static usize numPrevious = 0;
+  static CircuitRef* previous = NULL;
+
+  if (IsKeyDown(KEY_LEFT_CONTROL) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+    for (usize i = 0; i < active->numComponents; i++) {
+      if (distanceBetween(GetMousePosition(), active->components[i].pos) < 25.0) {
+        for (usize j = 0; j < project->numCircuits; j++) {
+          String name = fromCString(active->components[i].name);
+          if (stringEqual(&project->circuits[j].name, &name)) {
+            numPrevious++;
+            previous = realloc(previous, numPrevious * sizeof *previous);
+            previous[numPrevious - 1] = active->id;
+            return j + 1;
+          }
+          destroyString(&name);
+        }     
+      }
+    }
+  }
+
+  if (IsKeyPressed(KEY_BACKSPACE)) {
+    if (numPrevious > 0) {
+      numPrevious--;
+      return previous[numPrevious];
+    }
+  }
+
+  return active->id;
+}
+
+void drawActive(Circuit* circuit) {
+  String string = createString();
+  String editing = fromCString("Editing: ");
+  appendString(&string, &editing);
+  appendString(&string, &circuit->name);
+  char* buffer = toCString(&string);
+  DrawTextEx(GetFontDefault(), buffer, (Vector2){ 16.0, 16.0 }, FONT_SIZE, FONT_SPACING, PURPLE);
+  free(buffer);
+  destroyString(&string);
+  destroyString(&editing);
 }
 
 int logicol_main() {
 	InitWindow(640, 480, "Logicol");
 	SetTargetFPS(60);
 
-	Circuit circuit = createCircuit();
+  Project project = createProject();
+  CircuitRef active = addCircuit(&project, fromCString("MAIN"));
+  addCircuit(&project, fromCString("TEST"));
+  addComponent(getCircuit(&project, active), "TEST", 2, 1);
+  Camera2D camera = { 0 };
+  camera.zoom = 1.0;
+
+  bool inputting = false;
+  String buffer = createString();
 
 	while (!WindowShouldClose()) {
-		BeginDrawing();
+    Circuit* circuit = getCircuit(&project, active);
+
+    BeginDrawing();
+    {
+      ClearBackground(BACKGROUND);
+      drawActive(circuit);
+    }
+
+		BeginMode2D(camera);
 		{
-			drawCircuit(&circuit);
-			ClearBackground(BACKGROUND);
+			drawCircuit(circuit);
 
-			if (IsKeyPressed(KEY_A)) {
-				addComponent(&circuit, "AND", 2, 1);
+			if (!inputting && IsKeyPressed(KEY_A)) {
+				addComponent(circuit, "AND", 2, 1);
 			}
 
-			if (IsKeyPressed(KEY_O)) {
-				addComponent(&circuit, "OR", 2, 1);
+			if (!inputting && IsKeyPressed(KEY_O)) {
+				addComponent(circuit, "OR", 2, 1);
 			}
 
-			if (IsKeyPressed(KEY_X)) {
-				addComponent(&circuit, "XOR", 2, 1);
+			if (!inputting && IsKeyPressed(KEY_X)) {
+				addComponent(circuit, "XOR", 2, 1);
 			}
 
-			if (IsKeyPressed(KEY_N)) {
-				addComponent(&circuit, "NOT", 1, 1);
+			if (!inputting && IsKeyPressed(KEY_N)) {
+				addComponent(circuit, "NOT", 1, 1);
 			}
 
-			if (IsKeyPressed(KEY_I)) {
-				addComponent(&circuit, "INPUT", 0, 1);
+			if (!inputting && IsKeyPressed(KEY_I)) {
+				addComponent(circuit, "INPUT", 0, 1);
 			}
 
-			if (IsKeyPressed(KEY_U)) {
-				addComponent(&circuit, "OUTPUT", 1, 0);
+			if (!inputting && IsKeyPressed(KEY_U)) {
+				addComponent(circuit, "OUTPUT", 1, 0);
 			}
 
-			moveComponent(&circuit);
-			createConnection(&circuit);
-			toggleInput(&circuit);
+      if (inputting && IsKeyPressed(KEY_ENTER)) {
+        inputting = false;
+        CircuitRef found = 0;
+        for (usize i = 0; i < project.numCircuits; i++) {
+          if (stringEqual(&buffer, &project.circuits[i].name)) {
+            found = project.circuits[i].id;
+            break;
+          }
+        }
 
-			if (IsKeyPressed(KEY_SPACE)) {
-				simulate(&circuit);
-			}
+        if (!found) {
+          found = addCircuit(&project, cloneString(&buffer));
+          circuit = getCircuit(&project, active);
+        }
+
+        Circuit* child = getCircuit(&project, found);
+        usize numInputs = 0;
+        usize numOutputs = 0;
+        for (usize j = 0; j < child->numComponents; j++) {
+          if (strcmp(child->components[j].name, "INPUT") == 0) numInputs++;
+          if (strcmp(child->components[j].name, "OUTPUT") == 0) numOutputs++;
+        }
+
+        addComponent(circuit, toCString(&buffer), numInputs, numOutputs);
+
+        destroyString(&buffer);
+        buffer = createString();
+      }
+
+      if (inputting) {
+        int character;
+        while ((character = GetCharPressed()) != 0) {
+          buffer.length++;
+          buffer.data = realloc(buffer.data, sizeof(char) * buffer.length);
+          buffer.data[buffer.length - 1] = character;
+        }
+      }
+
+      if (!inputting && IsKeyPressed(KEY_C)) {
+        inputting = true;
+      }
+
+			moveComponent(circuit);
+			createConnection(circuit);
+			toggleInput(circuit);
+      moveCamera(&camera);
+      
+			simulate(circuit);
+
+      active = getActive(&project, circuit);
 		}
+    EndMode2D();
 		EndDrawing();
 	}
 
