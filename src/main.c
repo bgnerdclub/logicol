@@ -333,49 +333,6 @@ void toggleInput(Circuit* circuit) {
 	}
 }
 
-bool simulateComponent(Circuit* circuit, Input* input) {
-	if (input->component == 0) return false;
-
-	Component* component = getComponent(circuit, input->component);
-	if (component->ticked) { return component->outputs[input->outputIndex]; }
-
-	component->ticked = true;
-
-	if (strcmp(component->name, "AND") == 0) {
-		bool a = simulateComponent(circuit, &component->inputs[0]);
-		bool b = simulateComponent(circuit, &component->inputs[1]);
-		component->outputs[0] = a & b;
-	} else if (strcmp(component->name, "OR") == 0) {
-		bool a = simulateComponent(circuit, &component->inputs[0]);
-		bool b = simulateComponent(circuit, &component->inputs[1]);
-		component->outputs[0] = a | b;
-	} else if (strcmp(component->name, "XOR") == 0) {
-		bool a = simulateComponent(circuit, &component->inputs[0]);
-		bool b = simulateComponent(circuit, &component->inputs[1]);
-		component->outputs[0] = a ^ b;
-	} else if (strcmp(component->name, "NOT") == 0) {
-		bool a = simulateComponent(circuit, &component->inputs[0]);
-		component->outputs[0] = !a;
-	} else if (strcmp(component->name, "INPUT") == 0) {}
-
-	return component->outputs[input->outputIndex];
-}
-
-void simulate(Circuit* circuit) {
-	for (usize i = 0; i < circuit->numComponents; i++) {
-		circuit->components[i].ticked = false;
-	}
-
-	for (usize i = 0; i < circuit->numComponents; i++) {
-		if (strcmp(circuit->components[i].name, "OUTPUT") == 0) {
-	    simulateComponent(
-				circuit, 
-				&circuit->components[i].inputs[0]
-			);
-		}
-	}
-}
-
 void moveCamera(Camera2D* camera) {
   if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE)) {
     camera->target.x -= GetMouseDelta().x / camera->zoom;
@@ -487,14 +444,121 @@ void updateOutputs(Project* project, Circuit* active) {
   }
 }
 
+typedef enum NodeType {
+  NAND = 0, 
+  INPUT, 
+} NodeType;
+typedef struct Node Node;
+typedef struct Node {
+  Node* left;
+  Node* right;
+  bool ticked;
+  bool output;
+  NodeType type;
+} Node;
+
+typedef struct {
+  usize numRoots;
+  Node* roots;
+} Tree;
+
+void resetNodes(Node* node) {
+  node->ticked = false;
+  if (node->left) resetNodes(node->left);
+  if (node->right) resetNodes(node->left);
+}
+
+bool tickNode(Node* node) {
+  if (!node) return false;
+  if (node->ticked) return node->output;
+  node->ticked = true;
+
+  if (node->type == NAND) {
+    if (!node->left || !node->right) printf("PANIC\n");
+    node->output = !(tickNode(node->left) && tickNode(node->right));
+  }
+
+  return node->output;
+}
+
+Node* createNode() {
+  Node* node = malloc(sizeof(Node));
+  memset(node, 0, sizeof(Node));
+  return node;
+}
+
+void compileComponent(Node* node, Project* project, Circuit* circuit, Input* input) {
+  memset(node, 0, sizeof(Node));
+  if (input->component == 0) return;
+  Component* component = getComponent(circuit, input->component);
+
+  if (strcmp(component->name, "AND") == 0) {
+    Node* child = createNode();
+    node->left = child;
+    node->right = child;
+    child->left = createNode();
+    compileComponent(child->left, project, circuit, &component->inputs[0]); 
+    child->right = createNode();
+    compileComponent(child->right, project, circuit, &component->inputs[1]); 
+  } else if (strcmp(component->name, "OR") == 0) {
+    node->left = createNode();
+    node->right = createNode();
+    Node* left = createNode();
+    node->left->left = left;
+    node->left->right = left;
+    compileComponent(left, project, circuit, &component->inputs[0]); 
+    Node* right = createNode();
+    node->right->left = right;
+    node->right->right = right;
+    compileComponent(right, project, circuit, &component->inputs[1]); 
+  } else if (strcmp(component->name, "NOT") == 0) {
+    Node* child =  createNode();
+    node->left = child;
+    node->right = child;
+    compileComponent(child, project, circuit, &component->inputs[0]);
+  } else if (strcmp(component->name, "INPUT") == 0) {
+    node->type = INPUT;
+    node->output = component->outputs[0];
+  }
+}
+
+Tree compileProject(Project* project) {
+  usize numRoots = 0;
+  for (usize i = 0; i < project->circuits[0].numComponents; i++) {
+    if (strcmp(project->circuits[0].components[i].name, "OUTPUT") == 0) {
+      numRoots++;
+    }
+  }
+
+  Tree tree;
+  tree.numRoots = numRoots;
+  tree.roots = malloc(sizeof(Node) * numRoots);
+
+  for (usize i = 0; i < project->circuits[0].numComponents; i++) {
+    if (strcmp(project->circuits[0].components[i].name, "OUTPUT") == 0) {
+      compileComponent(&tree.roots[--numRoots], project, &project->circuits[0], &project->circuits[0].components[i].inputs[0]);
+    }
+  }
+
+  return tree;
+}
+
+void tickTree(Tree tree) {
+  for (usize i = 0; i < tree.numRoots; i++) {
+     resetNodes(&tree.roots[i]);
+  }
+
+  for (usize i = 0; i < tree.numRoots; i++) {
+    printf("%d\n", tickNode(&tree.roots[i]));
+  }
+}
+
 int logicol_main() {
 	InitWindow(640, 480, "Logicol");
 	SetTargetFPS(60);
 
   Project project = createProject();
   CircuitRef active = addCircuit(&project, fromCString("MAIN"));
-  addCircuit(&project, fromCString("TEST"));
-  addComponent(getCircuit(&project, active), "TEST", 2, 1);
   Camera2D camera = { 0 };
   camera.zoom = 1.0;
 
@@ -591,7 +655,20 @@ int logicol_main() {
 			toggleInput(circuit);
       moveCamera(&camera);
       
-			simulate(circuit);
+      if (IsKeyPressed(KEY_SPACE)) {
+        Tree tree = compileProject(&project);
+        tickTree(tree);
+        
+        
+
+        usize counter = tree.numRoots;;
+        for (usize i = 0; i < project.circuits[0].numComponents; i++) {
+          if (strcmp(project.circuits[0].components[i].name, "OUTPUT") == 0) {
+            Input* input = &project.circuits[0].components[i].inputs[0];
+            getComponent(&project.circuits[0], input->component)->outputs[input->outputIndex] = tree.roots[--counter].output;
+          }
+        }
+      }
 
       active = getActive(&project, circuit);
 		}
