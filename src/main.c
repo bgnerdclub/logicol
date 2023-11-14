@@ -494,6 +494,7 @@ typedef struct Parent {
   Component* component;
   Circuit* circuit;
   Parent* parent;
+  Circuit* root;
 } Parent;
 
 void compileComponent(Node* node, Project* project, Circuit* circuit, Input* input, Parent* parent) {
@@ -527,8 +528,7 @@ void compileComponent(Node* node, Project* project, Circuit* circuit, Input* inp
     node->right = child;
     compileComponent(child, project, circuit, &component->inputs[0], parent);
   } else if (strcmp(component->name, "INPUT") == 0) {
-    String main = fromCString("MAIN");
-    if (stringEqual(&circuit->name, &main)) {
+    if (circuit == parent->root) {
       node->type = INPUT;
       node->output = component->outputs[0];
     } else {
@@ -551,12 +551,12 @@ void compileComponent(Node* node, Project* project, Circuit* circuit, Input* inp
         usize counter = 0;
         for (usize j = 0; j < project->circuits[i].numComponents; j++) {
           if (strcmp(project->circuits[i].components[j].name, "OUTPUT") == 0) {
-            printf("HAPPY\n");
             if (counter++ == input->outputIndex) {
               Parent p;
               p.component = component;
               p.circuit = circuit;
               p.parent = parent;
+              p.root = parent->root;
               compileComponent(node, project, &project->circuits[i], &project->circuits[i].components[j].inputs[0], &p);
             }
           }
@@ -566,10 +566,10 @@ void compileComponent(Node* node, Project* project, Circuit* circuit, Input* inp
   }
 }
 
-Tree compileProject(Project* project) {
+Tree compileProject(Project* project, Circuit* root) {
   usize numRoots = 0;
-  for (usize i = 0; i < project->circuits[0].numComponents; i++) {
-    if (strcmp(project->circuits[0].components[i].name, "OUTPUT") == 0) {
+  for (usize i = 0; i < root->numComponents; i++) {
+    if (strcmp(root->components[i].name, "OUTPUT") == 0) {
       numRoots++;
     }
   }
@@ -578,9 +578,12 @@ Tree compileProject(Project* project) {
   tree.numRoots = numRoots;
   tree.roots = malloc(sizeof(Node) * numRoots);
 
-  for (usize i = 0; i < project->circuits[0].numComponents; i++) {
-    if (strcmp(project->circuits[0].components[i].name, "OUTPUT") == 0) {
-      compileComponent(&tree.roots[--numRoots], project, &project->circuits[0], &project->circuits[0].components[i].inputs[0], NULL);
+  for (usize i = 0; i < root->numComponents; i++) {
+    if (strcmp(root->components[i].name, "OUTPUT") == 0) {
+      Parent parent;
+      memset(&parent, 0, sizeof(Parent));
+      parent.root = root;
+      compileComponent(&tree.roots[--numRoots], project, root, &root->components[i].inputs[0], &parent);
     }
   }
 
@@ -700,14 +703,14 @@ int logicol_main() {
       moveCamera(&camera);
       
       if (IsKeyPressed(KEY_SPACE)) {
-        Tree tree = compileProject(&project);
+        Tree tree = compileProject(&project, circuit);
         tickTree(tree);
         
         usize counter = tree.numRoots;;
-        for (usize i = 0; i < project.circuits[0].numComponents; i++) {
-          if (strcmp(project.circuits[0].components[i].name, "OUTPUT") == 0) {
-            Input* input = &project.circuits[0].components[i].inputs[0];
-            getComponent(&project.circuits[0], input->component)->outputs[input->outputIndex] = tree.roots[--counter].output;
+        for (usize i = 0; i < circuit->numComponents; i++) {
+          if (strcmp(circuit->components[i].name, "OUTPUT") == 0) {
+            Input* input = &circuit->components[i].inputs[0];
+            getComponent(circuit, input->component)->outputs[input->outputIndex] = tree.roots[--counter].output;
           }
         }
       }
