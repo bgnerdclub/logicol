@@ -260,10 +260,10 @@ f32 distanceBetween(Vector2 a, Vector2 b) {
 	return sqrt((a.x - b.x)*(a.x - b.x) + (a.y - b.y)*(a.y - b.y));
 }
 
-void moveComponent(Circuit* circuit) {
+void moveComponent(Circuit* circuit, Camera2D camera) {
 	static ComponentRef moving = 0;
 
-	Vector2 mousePos = GetMousePosition();
+	Vector2 mousePos = GetScreenToWorld2D(GetMousePosition(), camera);
 
 	if (!IsKeyDown(KEY_LEFT_CONTROL) && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
 		for (usize i = 0; i < circuit->numComponents; i++) {
@@ -276,8 +276,8 @@ void moveComponent(Circuit* circuit) {
 	if (moving && IsMouseButtonDown(MOUSE_BUTTON_LEFT)) {
 		Component* component = getComponent(circuit, moving);
 		Vector2 mouseDelta = GetMouseDelta();
-		component->pos.x += mouseDelta.x;
-		component->pos.y += mouseDelta.y;
+		component->pos.x += mouseDelta.x / camera.zoom;
+		component->pos.y += mouseDelta.y / camera.zoom;
 	}
 
 	if (IsMouseButtonReleased(MOUSE_BUTTON_LEFT)) {
@@ -285,11 +285,11 @@ void moveComponent(Circuit* circuit) {
 	}
 }
 
-void createConnection(Circuit* circuit) {
+void createConnection(Circuit* circuit, Camera2D camera) {
 	static ComponentRef from = 0;
 	static usize output = 0;
 
-	Vector2 mousePos = GetMousePosition();
+	Vector2 mousePos = GetScreenToWorld2D(GetMousePosition(), camera);
 
 	if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
 		for (usize i = 0; i < circuit->numComponents; i++) {
@@ -321,11 +321,13 @@ void createConnection(Circuit* circuit) {
 	}
 }
 
-void toggleInput(Circuit* circuit) {
+void toggleInput(Circuit* circuit, Camera2D camera) {
+  Vector2 mousePos = GetScreenToWorld2D(GetMousePosition(), camera);
+
 	if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
 		for (usize i = 0; i < circuit->numComponents; i++) {
 			if (strcmp(circuit->components[i].name, "INPUT") == 0) {
-				if (distanceBetween(GetMousePosition(), circuit->components[i].pos) < 25.0) {
+				if (distanceBetween(mousePos, circuit->components[i].pos) < 25.0) {
 					circuit->components[i].outputs[0] = !circuit->components[i].outputs[0];
 				}
 			}
@@ -487,38 +489,80 @@ Node* createNode() {
   return node;
 }
 
-void compileComponent(Node* node, Project* project, Circuit* circuit, Input* input) {
+typedef struct Parent Parent;
+typedef struct Parent {
+  Component* component;
+  Circuit* circuit;
+  Parent* parent;
+} Parent;
+
+void compileComponent(Node* node, Project* project, Circuit* circuit, Input* input, Parent* parent) {
   memset(node, 0, sizeof(Node));
   if (input->component == 0) return;
   Component* component = getComponent(circuit, input->component);
+  printf("%s\n", component->name);
 
   if (strcmp(component->name, "AND") == 0) {
     Node* child = createNode();
     node->left = child;
     node->right = child;
     child->left = createNode();
-    compileComponent(child->left, project, circuit, &component->inputs[0]); 
+    compileComponent(child->left, project, circuit, &component->inputs[0], parent); 
     child->right = createNode();
-    compileComponent(child->right, project, circuit, &component->inputs[1]); 
+    compileComponent(child->right, project, circuit, &component->inputs[1], parent); 
   } else if (strcmp(component->name, "OR") == 0) {
     node->left = createNode();
     node->right = createNode();
     Node* left = createNode();
     node->left->left = left;
     node->left->right = left;
-    compileComponent(left, project, circuit, &component->inputs[0]); 
+    compileComponent(left, project, circuit, &component->inputs[0], parent); 
     Node* right = createNode();
     node->right->left = right;
     node->right->right = right;
-    compileComponent(right, project, circuit, &component->inputs[1]); 
+    compileComponent(right, project, circuit, &component->inputs[1], parent); 
   } else if (strcmp(component->name, "NOT") == 0) {
     Node* child =  createNode();
     node->left = child;
     node->right = child;
-    compileComponent(child, project, circuit, &component->inputs[0]);
+    compileComponent(child, project, circuit, &component->inputs[0], parent);
   } else if (strcmp(component->name, "INPUT") == 0) {
-    node->type = INPUT;
-    node->output = component->outputs[0];
+    String main = fromCString("MAIN");
+    if (stringEqual(&circuit->name, &main)) {
+      node->type = INPUT;
+      node->output = component->outputs[0];
+    } else {
+      usize numInput = 0;
+      for (usize i = 0; i < circuit->numComponents; i++) {
+        if (strcmp(circuit->components[i].name, "INPUT") == 0) {
+          if (circuit->components[i].id == input->component) break;
+          numInput++;
+        }
+      }
+      printf("Hit %zu input", numInput);
+
+      compileComponent(node, project, parent->circuit, &parent->component->inputs[numInput], parent->parent);
+    }
+  } else {
+    String name = fromCString(component->name);
+    for (usize i = 0; i < project->numCircuits; i++) {
+      if (stringEqual(&name, &project->circuits[i].name)) {
+        printf("Found: %s\n", component->name);
+        usize counter = 0;
+        for (usize j = 0; j < project->circuits[i].numComponents; j++) {
+          if (strcmp(project->circuits[i].components[j].name, "OUTPUT") == 0) {
+            printf("HAPPY\n");
+            if (counter++ == input->outputIndex) {
+              Parent p;
+              p.component = component;
+              p.circuit = circuit;
+              p.parent = parent;
+              compileComponent(node, project, &project->circuits[i], &project->circuits[i].components[j].inputs[0], &p);
+            }
+          }
+        }
+      }
+    }
   }
 }
 
@@ -536,7 +580,7 @@ Tree compileProject(Project* project) {
 
   for (usize i = 0; i < project->circuits[0].numComponents; i++) {
     if (strcmp(project->circuits[0].components[i].name, "OUTPUT") == 0) {
-      compileComponent(&tree.roots[--numRoots], project, &project->circuits[0], &project->circuits[0].components[i].inputs[0]);
+      compileComponent(&tree.roots[--numRoots], project, &project->circuits[0], &project->circuits[0].components[i].inputs[0], NULL);
     }
   }
 
@@ -650,17 +694,15 @@ int logicol_main() {
         inputting = true;
       }
 
-			moveComponent(circuit);
-			createConnection(circuit);
-			toggleInput(circuit);
+			moveComponent(circuit, camera);
+			createConnection(circuit, camera);
+			toggleInput(circuit, camera);
       moveCamera(&camera);
       
       if (IsKeyPressed(KEY_SPACE)) {
         Tree tree = compileProject(&project);
         tickTree(tree);
         
-        
-
         usize counter = tree.numRoots;;
         for (usize i = 0; i < project.circuits[0].numComponents; i++) {
           if (strcmp(project.circuits[0].components[i].name, "OUTPUT") == 0) {
