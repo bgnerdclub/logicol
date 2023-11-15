@@ -89,9 +89,9 @@ typedef struct {
 } Input;
 
 typedef struct Component {
-	Vector2 pos;
 	ComponentRef id;
-	const char* name;
+	Vector2 pos;
+	String name;
 	usize numInputs;
 	Input* inputs;
 	usize numOutputs;
@@ -126,6 +126,8 @@ CircuitRef addCircuit(Project* project, String name) {
   circuit->numComponents = 0;
   circuit->components = NULL;
   circuit->name = name;
+  printf("%d\n", name.length);
+  printf("%d\n", circuit->name.length);
 	return circuit->id;
 }
 
@@ -137,11 +139,10 @@ Component* getComponent(Circuit* circuit, ComponentRef ref) {
 	return &circuit->components[ref - 1];
 }
 
-ComponentRef addComponent(Circuit* circuit, const char* name, usize numInputs, usize numOutputs) {
+ComponentRef addComponent(Circuit* circuit, String name, usize numInputs, usize numOutputs) {
 	Component component;
 	component.pos = (Vector2){ 100, 100 };
 	component.id = circuit->numComponents + 1;
-	printf("%zu\n", component.id);
 	component.name = name;
 	component.numInputs = numInputs;
 	component.inputs = malloc(sizeof *component.inputs * numInputs);
@@ -172,10 +173,11 @@ void addConnection(Circuit* circuit, ComponentRef from, ComponentRef to, usize f
 }
 
 Vector2 getSize(Component* component) {
-	Vector2 textSize = MeasureTextEx(GetFontDefault(), component->name, FONT_SIZE, FONT_SPACING);
+  char* buffer = toCString(&component->name);
+	Vector2 textSize = MeasureTextEx(GetFontDefault(), buffer, FONT_SIZE, FONT_SPACING);
+  free(buffer);
 
 	char idStr[(int)((ceil(log10(component->id))+1)*sizeof(char))];
-	sprintf(idStr, "%zu", component->id);
 	Vector2 idSize = MeasureTextEx(GetFontDefault(), idStr, FONT_SIZE, FONT_SPACING);
 	
 	return (Vector2){ textSize.x + 32.0, textSize.y + idSize.y + 24.0 };
@@ -197,7 +199,9 @@ void drawComponent(Circuit* circuit, Component* component) {
 	f32 x = component->pos.x;
 	f32 y = component->pos.y;
 
-	Vector2 textSize = MeasureTextEx(GetFontDefault(), component->name, FONT_SIZE, FONT_SPACING);
+  char* buffer = toCString(&component->name);
+	Vector2 textSize = MeasureTextEx(GetFontDefault(), buffer, FONT_SIZE, FONT_SPACING);
+  free(buffer);
 
 	char idStr[(int)((ceil(log10(component->id))+1)*sizeof(char))];
 	sprintf(idStr, "%zu", component->id);
@@ -206,24 +210,31 @@ void drawComponent(Circuit* circuit, Component* component) {
 	Rectangle rect = { x, y, textSize.x + 32.0, textSize.y + idSize.y + 24.0 };
 
 	Color color = PURPLE;
-	if (strcmp(component->name, "INPUT") == 0) {
+  String input = fromCString("INPUT");
+  String output = fromCString("OUTPUT");
+	if (stringEqual(&component->name, &input)) {
 		if (component->outputs[0]) {
 			color = GREEN;
 		} else {
 			color = RED;
 		}
 	}
-  if (strcmp(component->name, "OUTPUT") == 0) {
+  if (stringEqual(&component->name, &output)) {
     if (component->inputs[0].component != 0 && getComponent(circuit, component->inputs[0].component)->outputs[component->inputs[0].outputIndex]) {
 			color = GREEN;
 		} else {
 			color = RED;
 		}
   }
+  destroyString(&input);
+  destroyString(&output);
 
 	DrawRectangleLinesEx(rect, 6.0, color);
 	DrawTextEx(GetFontDefault(), idStr, (Vector2){ x + ((rect.width - idSize.x) / 2), y + 8 }, FONT_SIZE, FONT_SPACING, color);
-	DrawTextEx(GetFontDefault(), component->name, (Vector2){x + 16, y + idSize.y + 16.0 }, FONT_SIZE, FONT_SPACING, color);
+
+  buffer = toCString(&component->name);
+	DrawTextEx(GetFontDefault(), buffer, (Vector2){x + 16, y + idSize.y + 16.0 }, FONT_SIZE, FONT_SPACING, color);
+  free(buffer);
 	
 	for (usize i = 0; i < component->numInputs; i++) {
 		Vector2 start = { x, y + (rect.height * (i + 1))/(component->numInputs + 1) };
@@ -324,15 +335,19 @@ void createConnection(Circuit* circuit, Camera2D camera) {
 void toggleInput(Circuit* circuit, Camera2D camera) {
   Vector2 mousePos = GetScreenToWorld2D(GetMousePosition(), camera);
 
+  String input = fromCString("INPUT");
+
 	if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
 		for (usize i = 0; i < circuit->numComponents; i++) {
-			if (strcmp(circuit->components[i].name, "INPUT") == 0) {
+			if (stringEqual(&circuit->components[i].name, &input)) {
 				if (distanceBetween(mousePos, circuit->components[i].pos) < 25.0) {
 					circuit->components[i].outputs[0] = !circuit->components[i].outputs[0];
 				}
 			}
 		} 
 	}
+
+  destroyString(&input);
 }
 
 void moveCamera(Camera2D* camera) {
@@ -361,14 +376,12 @@ CircuitRef getActive(Project* project, Circuit* active) {
     for (usize i = 0; i < active->numComponents; i++) {
       if (distanceBetween(GetMousePosition(), active->components[i].pos) < 25.0) {
         for (usize j = 0; j < project->numCircuits; j++) {
-          String name = fromCString(active->components[i].name);
-          if (stringEqual(&project->circuits[j].name, &name)) {
+          if (stringEqual(&project->circuits[j].name, &active->components[i].name)) {
             numPrevious++;
             previous = realloc(previous, numPrevious * sizeof *previous);
             previous[numPrevious - 1] = active->id;
             return j + 1;
           }
-          destroyString(&name);
         }     
       }
     }
@@ -385,14 +398,12 @@ CircuitRef getActive(Project* project, Circuit* active) {
 }
 
 void drawActive(Circuit* circuit) {
-  String string = createString();
   String editing = fromCString("Editing: ");
-  appendString(&string, &editing);
-  appendString(&string, &circuit->name);
-  char* buffer = toCString(&string);
+  appendString(&editing, &circuit->name);
+  char* buffer = toCString(&editing);
+  printf("%s\n", toCString(&circuit->name));
   DrawTextEx(GetFontDefault(), buffer, (Vector2){ 16.0, 16.0 }, FONT_SIZE, FONT_SPACING, PURPLE);
   free(buffer);
-  destroyString(&string);
   destroyString(&editing);
 }
 
@@ -400,23 +411,19 @@ void updateInputs(Project* project, Circuit* active) {
   usize numInputs = 0;
   String input = fromCString("INPUT");
   for (usize i = 0; i < active->numComponents; i++) {
-    String name = fromCString(active->components[i].name);
-    if (stringEqual(&name, &input)) {
+    if (stringEqual(&active->components[i].name, &input)) {
       numInputs++;
     }
-    destroyString(&name);
   }
   destroyString(&input);
 
   for (usize i = 0; i < project->numCircuits; i++) {
     for (usize j = 0; j < project->circuits[i].numComponents; j++) {
-      String name = fromCString(project->circuits[i].components[j].name);
-      if (stringEqual(&name, &active->name)) {
+      if (stringEqual(&project->circuits[i].components[j].name, &active->name)) {
         project->circuits[i].components[j].numInputs = numInputs;
         project->circuits[i].components[j].inputs = realloc(project->circuits[i].components[j].inputs, sizeof(Input) * numInputs);
         memset(&project->circuits[i].components[j].inputs[numInputs - 1], 0, sizeof(Input));
       }
-      destroyString(&name);
     }
   }
 }
@@ -425,23 +432,19 @@ void updateOutputs(Project* project, Circuit* active) {
   usize numOutputs = 0;
   String output = fromCString("OUTPUT");
   for (usize i = 0; i < active->numComponents; i++) {
-    String name = fromCString(active->components[i].name);
-    if (stringEqual(&name, &output)) {
+    if (stringEqual(&active->components[i].name, &output)) {
       numOutputs++;
     }
-    destroyString(&name);
   }
   destroyString(&output);
 
   for (usize i = 0; i < project->numCircuits; i++) {
     for (usize j = 0; j < project->circuits[i].numComponents; j++) {
-      String name = fromCString(project->circuits[i].components[j].name);
-      if (stringEqual(&name, &active->name)) {
+      if (stringEqual(&project->circuits[i].components[j].name, &active->name)) {
         project->circuits[i].components[j].numOutputs = numOutputs;
         project->circuits[i].components[j].outputs = realloc(project->circuits[i].components[j].outputs, sizeof(bool) * numOutputs);
         project->circuits[i].components[j].outputs[numOutputs - 1] = false;
       }
-      destroyString(&name);
     }
   }
 }
@@ -501,9 +504,14 @@ void compileComponent(Node* node, Project* project, Circuit* circuit, Input* inp
   memset(node, 0, sizeof(Node));
   if (input->component == 0) return;
   Component* component = getComponent(circuit, input->component);
-  printf("%s\n", component->name);
 
-  if (strcmp(component->name, "AND") == 0) {
+  String and = fromCString("AND");
+  String or = fromCString("OR");
+  String not = fromCString("NOT");
+  String inputStr = fromCString("INPUT");
+  String output = fromCString("OUTPUT");
+
+  if (stringEqual(&component->name, &and)) {
     Node* child = createNode();
     node->left = child;
     node->right = child;
@@ -511,7 +519,7 @@ void compileComponent(Node* node, Project* project, Circuit* circuit, Input* inp
     compileComponent(child->left, project, circuit, &component->inputs[0], parent); 
     child->right = createNode();
     compileComponent(child->right, project, circuit, &component->inputs[1], parent); 
-  } else if (strcmp(component->name, "OR") == 0) {
+  } else if (stringEqual(&component->name, &or)) {
     node->left = createNode();
     node->right = createNode();
     Node* left = createNode();
@@ -522,19 +530,19 @@ void compileComponent(Node* node, Project* project, Circuit* circuit, Input* inp
     node->right->left = right;
     node->right->right = right;
     compileComponent(right, project, circuit, &component->inputs[1], parent); 
-  } else if (strcmp(component->name, "NOT") == 0) {
+  } else if (stringEqual(&component->name, &not)) {
     Node* child =  createNode();
     node->left = child;
     node->right = child;
     compileComponent(child, project, circuit, &component->inputs[0], parent);
-  } else if (strcmp(component->name, "INPUT") == 0) {
+  } else if (stringEqual(&component->name, &inputStr)) {
     if (circuit == parent->root) {
       node->type = INPUT;
       node->output = component->outputs[0];
     } else {
       usize numInput = 0;
       for (usize i = 0; i < circuit->numComponents; i++) {
-        if (strcmp(circuit->components[i].name, "INPUT") == 0) {
+        if (stringEqual(&circuit->components[i].name, &inputStr)) {
           if (circuit->components[i].id == input->component) break;
           numInput++;
         }
@@ -544,13 +552,11 @@ void compileComponent(Node* node, Project* project, Circuit* circuit, Input* inp
       compileComponent(node, project, parent->circuit, &parent->component->inputs[numInput], parent->parent);
     }
   } else {
-    String name = fromCString(component->name);
     for (usize i = 0; i < project->numCircuits; i++) {
-      if (stringEqual(&name, &project->circuits[i].name)) {
-        printf("Found: %s\n", component->name);
+      if (stringEqual(&component->name, &project->circuits[i].name)) {
         usize counter = 0;
         for (usize j = 0; j < project->circuits[i].numComponents; j++) {
-          if (strcmp(project->circuits[i].components[j].name, "OUTPUT") == 0) {
+          if (stringEqual(&project->circuits[i].components[j].name, &output)) {
             if (counter++ == input->outputIndex) {
               Parent p;
               p.component = component;
@@ -564,12 +570,20 @@ void compileComponent(Node* node, Project* project, Circuit* circuit, Input* inp
       }
     }
   }
+
+  destroyString(&and);
+  destroyString(&or);
+  destroyString(&not);
+  destroyString(&inputStr);
+  destroyString(&output);
 }
 
 Tree compileProject(Project* project, Circuit* root) {
+  String output = fromCString("OUTPUT");
+
   usize numRoots = 0;
   for (usize i = 0; i < root->numComponents; i++) {
-    if (strcmp(root->components[i].name, "OUTPUT") == 0) {
+    if (stringEqual(&root->components[i].name, &output)) {
       numRoots++;
     }
   }
@@ -579,13 +593,15 @@ Tree compileProject(Project* project, Circuit* root) {
   tree.roots = malloc(sizeof(Node) * numRoots);
 
   for (usize i = 0; i < root->numComponents; i++) {
-    if (strcmp(root->components[i].name, "OUTPUT") == 0) {
+    if (stringEqual(&root->components[i].name, &output)) {
       Parent parent;
       memset(&parent, 0, sizeof(Parent));
       parent.root = root;
       compileComponent(&tree.roots[--numRoots], project, root, &root->components[i].inputs[0], &parent);
     }
   }
+
+  destroyString(&output);
 
   return tree;
 }
@@ -600,12 +616,150 @@ void tickTree(Tree tree) {
   }
 }
 
+usize getComponentSize(Component* component) {
+  usize size = 0;
+  size += sizeof(component->id);
+  size += sizeof(component->pos);
+  size += sizeof(component->name.length);
+  size += component->name.length;
+  size += sizeof(component->numInputs);
+  size += sizeof(Input) * component->numInputs;
+  size += sizeof(component->numOutputs);
+  size += sizeof(bool) * component->numOutputs;
+  return size;
+}
+
+usize getCircuitSize(Circuit* circuit) {
+  usize size = 0;
+  size += sizeof(circuit->id);
+  size += sizeof(circuit->name.length);
+  size += circuit->name.length;
+  size += sizeof(circuit->numComponents);
+  for (usize i = 0; i < circuit->numComponents; i++) {
+    size += getComponentSize(&circuit->components[i]);
+  }
+  return size;
+}
+
+#define PUT(thing) memcpy(&buffer[pointer], &thing, sizeof(thing)); pointer += sizeof(thing)
+
+void saveComponent(Component* component, char* buffer) {
+  usize pointer = 0;
+  PUT(component->id);
+  PUT(component->pos);
+  PUT(component->name.length);
+  memcpy(&buffer[pointer], component->name.data, component->name.length);
+  pointer += component->name.length;
+  PUT(component->numInputs);
+  memcpy(&buffer[pointer], component->inputs, sizeof(Input) * component->numInputs);
+  pointer += sizeof(Input) * component->numInputs;
+  PUT(component->numOutputs);
+  memcpy(&buffer[pointer], component->outputs, sizeof(bool) * component->numOutputs);
+  pointer += sizeof(bool) * component->numOutputs;
+}
+
+void saveCircuit(Circuit* circuit, char* buffer) {
+  usize pointer = 0;
+  PUT(circuit->id);
+  PUT(circuit->name.length);
+  memcpy(&buffer[pointer], circuit->name.data, circuit->name.length);
+  pointer += circuit->name.length;
+  PUT(circuit->numComponents);
+  for (usize i = 0; i < circuit->numComponents; i++) {
+    saveComponent(&circuit->components[i], &buffer[pointer]);
+    pointer += getComponentSize(&circuit->components[i]);
+  }
+}
+
+void saveProject(Project* project) {
+  usize size = 0;
+  size += 8; // project->numCircuits
+  for (usize i = 0; i < project->numCircuits; i++) {
+    size += getCircuitSize(&project->circuits[i]);
+  }
+  printf("Size: %d\n", size);
+
+  char* buffer = malloc(size);
+  memcpy(&buffer[0], &project->numCircuits, sizeof(usize));
+  usize pointer = sizeof(usize);
+  for (usize i = 0; i < project->numCircuits; i++) {
+    saveCircuit(&project->circuits[i], &buffer[pointer]);
+    pointer += getCircuitSize(&project->circuits[i]);
+  }
+
+  FILE* file = fopen("test.logic", "wb+");
+  fwrite(buffer, size, 1, file);
+  fclose(file);
+
+  free(buffer);
+}
+
+#define GET(thing) memcpy(&thing, &buffer[pointer], sizeof(thing)); pointer += sizeof(thing)
+
+usize loadComponent(Component* component, char* buffer) {
+  usize pointer = 0;
+  GET(component->id);
+  GET(component->pos);
+  GET(component->name.length);
+  component->name.data = malloc(component->name.length);
+  memcpy(component->name.data, &buffer[pointer], component->name.length);
+  pointer += component->name.length;
+  GET(component->numInputs);
+  component->inputs = malloc(sizeof(Input) * component->numInputs);
+  memcpy(component->inputs, &buffer[pointer], sizeof(Input) * component->numInputs);
+  pointer += sizeof(Input) * component->numInputs;
+  GET(component->numOutputs);
+  component->outputs = malloc(sizeof(bool) * component->numOutputs);
+  memcpy(component->outputs, &buffer[pointer], sizeof(bool) * component->numOutputs);
+  pointer += sizeof(bool) * component->numOutputs;
+  return pointer;
+}
+
+usize loadCircuit(Circuit* circuit, char* buffer) {
+  usize pointer = 0;
+  GET(circuit->id);
+  GET(circuit->name.length);
+  circuit->name.data = malloc(circuit->name.length);
+  memcpy(circuit->name.data, &buffer[pointer], circuit->name.length);
+  pointer += circuit->name.length;
+  GET(circuit->numComponents);
+  circuit->components = malloc(sizeof(Component) * circuit->numComponents);
+  memset(circuit->components, 0, sizeof(Component) * circuit->numComponents);
+  for (usize i = 0; i < circuit->numComponents; i++) {
+    pointer += loadComponent(&circuit->components[i], &buffer[pointer]);
+  }
+  return pointer;
+}
+
+Project loadProject() {
+  FILE* file = fopen("test.logic", "rb");
+  fseek(file, 0, SEEK_END);
+  usize size = ftell(file);
+  fseek(file, 0, SEEK_SET);
+
+  char* buffer = malloc(size);
+  fread(buffer, size, 1, file);
+  usize pointer = 0;
+  
+  Project project;
+  GET(project.numCircuits);
+  printf("numCircuits: %d\n", project.numCircuits);
+  project.circuits = malloc(sizeof(Circuit) * project.numCircuits);
+  memset(project.circuits, 0, sizeof(Circuit) * project.numCircuits);
+  for (usize i = 0; i < project.numCircuits; i++) {
+    pointer += loadCircuit(&project.circuits[i], &buffer[pointer]);
+  }
+  printf("Pointer: %zu\n", pointer);
+  return project;
+}
+
 int logicol_main() {
 	InitWindow(640, 480, "Logicol");
 	SetTargetFPS(60);
 
   Project project = createProject();
   CircuitRef active = addCircuit(&project, fromCString("MAIN"));
+  printf("%d\n", project.circuits[0].name.length);
   Camera2D camera = { 0 };
   camera.zoom = 1.0;
 
@@ -626,28 +780,28 @@ int logicol_main() {
 			drawCircuit(circuit);
 
 			if (!inputting && IsKeyPressed(KEY_A)) {
-				addComponent(circuit, "AND", 2, 1);
+				addComponent(circuit, fromCString("AND"), 2, 1);
 			}
 
 			if (!inputting && IsKeyPressed(KEY_O)) {
-				addComponent(circuit, "OR", 2, 1);
+				addComponent(circuit, fromCString("OR"), 2, 1);
 			}
 
 			if (!inputting && IsKeyPressed(KEY_X)) {
-				addComponent(circuit, "XOR", 2, 1);
+				addComponent(circuit, fromCString("XOR"), 2, 1);
 			}
 
 			if (!inputting && IsKeyPressed(KEY_N)) {
-				addComponent(circuit, "NOT", 1, 1);
+				addComponent(circuit, fromCString("NOT"), 1, 1);
 			}
 
 			if (!inputting && IsKeyPressed(KEY_I)) {
-				addComponent(circuit, "INPUT", 0, 1);
+				addComponent(circuit, fromCString("INPUT"), 0, 1);
         updateInputs(&project, circuit);
 			}
 
 			if (!inputting && IsKeyPressed(KEY_U)) {
-				addComponent(circuit, "OUTPUT", 1, 0);
+				addComponent(circuit, fromCString("OUTPUT"), 1, 0);
         updateOutputs(&project, circuit);
 			}
 
@@ -669,14 +823,17 @@ int logicol_main() {
         Circuit* child = getCircuit(&project, found);
         usize numInputs = 0;
         usize numOutputs = 0;
+        String inputStr = fromCString("INPUT"); 
+        String outputStr = fromCString("OUTPUT"); 
         for (usize j = 0; j < child->numComponents; j++) {
-          if (strcmp(child->components[j].name, "INPUT") == 0) numInputs++;
-          if (strcmp(child->components[j].name, "OUTPUT") == 0) numOutputs++;
+          if (stringEqual(&child->components[j].name, &inputStr)) numInputs++;
+          if (stringEqual(&child->components[j].name, &outputStr)) numOutputs++;
         }
 
-        addComponent(circuit, toCString(&buffer), numInputs, numOutputs);
+        addComponent(circuit, buffer, numInputs, numOutputs);
 
-        destroyString(&buffer);
+        destroyString(&inputStr);
+        destroyString(&outputStr);
         buffer = createString();
       }
 
@@ -701,18 +858,30 @@ int logicol_main() {
 			createConnection(circuit, camera);
 			toggleInput(circuit, camera);
       moveCamera(&camera);
+
+      if (IsKeyPressed(KEY_S)) {
+        saveProject(&project);
+      }
+
+      if (IsKeyPressed(KEY_L)) {
+        project = loadProject();
+        active = project.circuits[0].id;
+      }
       
       if (IsKeyPressed(KEY_SPACE)) {
         Tree tree = compileProject(&project, circuit);
         tickTree(tree);
         
         usize counter = tree.numRoots;;
+        String outputStr = fromCString("OUTPUT");
         for (usize i = 0; i < circuit->numComponents; i++) {
-          if (strcmp(circuit->components[i].name, "OUTPUT") == 0) {
+          if (stringEqual(&circuit->components[i].name, &outputStr)) {
             Input* input = &circuit->components[i].inputs[0];
             getComponent(circuit, input->component)->outputs[input->outputIndex] = tree.roots[--counter].output;
           }
         }
+        destroyString(&outputStr);
+        saveProject(&project);
       }
 
       active = getActive(&project, circuit);
